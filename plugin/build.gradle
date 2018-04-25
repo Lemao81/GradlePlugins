@@ -1,0 +1,35 @@
+apply plugin: 'groovy'
+apply plugin: 'java'
+apply plugin: 'kotlin'
+apply plugin: 'maven'
+
+uploadArchives {
+    repositories {
+        mavenDeployer {
+            repository(url: Urls.mavenLocalInternal) {
+                authentication(userName: LOCAL_REPO_USER, password: LOCAL_REPO_PASSWORD)
+            }
+            pom {
+                groupId = GROUP_ID
+                artifactId = 'gradleplugins'
+                version = '1.0.2'
+            }
+        }
+    }
+}
+
+dependencies {
+    implementation gradleApi()
+    implementation localGroovy()
+
+    testCompile gradleTestKit()
+    testCompile Libs.jUnit
+}
+
+sourceCompatibility = Versions.java8
+compileKotlin {
+    kotlinOptions.jvmTarget = Versions.java8
+}
+compileTestKotlin {
+    kotlinOptions.jvmTarget = Versions.java8
+}

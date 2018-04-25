@@ -1,0 +1,13 @@
+buildscript {
+    repositories {
+        mavenCentral()
+        flatDir {
+            dirs '..\\plugin\\build\\libs'
+        }
+    }
+    dependencies {
+        classpath name: "plugin"
+    }
+}
+
+apply plugin: 'archivaUpload'
