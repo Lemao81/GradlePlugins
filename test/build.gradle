@@ -1,6 +1,9 @@
+apply plugin: 'com.android.library'
+//apply plugin: 'java'
+
 buildscript {
     repositories {
-        mavenCentral()
+        jcenter()
         flatDir {
             dirs '..\\plugin\\build\\libs'
         }
@@ -8,6 +11,10 @@ buildscript {
     dependencies {
         classpath name: "plugin"
     }
+}
+
+android {
+    compileSdkVersion Versions.compileSdkVersion
 }
 
 apply plugin: 'archivaUpload'
