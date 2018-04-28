@@ -1,1 +1,1 @@
-include ':plugin',':test'
+include ':plugins',':testplugins'

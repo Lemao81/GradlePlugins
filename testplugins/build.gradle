@@ -1,0 +1,39 @@
+apply plugin: 'com.android.library'
+apply plugin: 'maven'
+//apply plugin: 'java'
+
+ext {
+    artefactId = "gradleplugintest"
+}
+
+buildscript {
+    repositories {
+        jcenter()
+        flatDir {
+            dirs '..\\plugins\\build\\libs'
+        }
+    }
+    dependencies {
+        classpath name: "plugin"
+    }
+}
+
+android {
+    compileSdkVersion Versions.compileSdkVersion
+}
+
+apply plugin: 'archivaUpload'
+
+uploadArchives {
+    repositories {
+        mavenDeployer {
+            repository(url: Urls.mavenLocalInternal) {
+                authentication(userName: LOCAL_REPO_USER, password: LOCAL_REPO_PASSWORD)
+            }
+            pom {
+                version = file("$projectDir/version.txt").readLines().last()
+            }
+        }
+    }
+}
+
