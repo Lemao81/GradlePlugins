@@ -2,11 +2,15 @@ package com.jueggs.gradleplugins
 
 import com.android.build.gradle.LibraryExtension
 import com.android.build.gradle.api.AndroidSourceDirectorySet
-import org.gradle.api.*
+import org.gradle.api.GradleException
+import org.gradle.api.Plugin
+import org.gradle.api.Project
+import org.gradle.api.Task
 import org.gradle.api.artifacts.maven.MavenDeployer
 import org.gradle.api.internal.AbstractTask
 import org.gradle.api.plugins.BasePlugin
 import org.gradle.api.plugins.JavaPluginConvention
+import org.gradle.api.publication.maven.internal.deployer.MavenRemoteRepository
 import org.gradle.api.tasks.Upload
 import org.gradle.api.tasks.bundling.Jar
 import org.gradle.api.tasks.javadoc.Javadoc
@@ -27,11 +31,23 @@ class ArchivaUploadPlugin implements Plugin<Project> {
     private final static String CLASSIFIER_JAVADOC = "javadoc"
     private final static String ARCHIVES_CONFIG_NAME = "archives"
 
-    private final static String CONFIG_ARTEFACT_ID_NAME = "artefactId"
-    private final static String CONFIG_GROUP_ID_NAME = "groupId"
-    private final static String CONFIG_PACKAGING_NAME = "packaging"
+    private final static String ARTEFACT_ID_PROPERTY = "artefactId"
+    private final static String GROUP_ID_PROPERTY = "groupId"
+    private final static String PACKAGING_PROPERTY = "packaging"
+    private final static String URL_PROPERTY = "url"
+    private final static String USERNAME_PROPERTY = "userName"
+    private final static String PASSWORD_PROPERTY = "password"
+
     private final static String DEFAULT_GROUP_ID = "com.jueggs"
     private final static String DEFAULT_PACKAGING = "aar"
+    private final static String DEFAULT_URL = "http://localhost:8080/repository/internal"
+    private final static String DEFAULT_USERNAME = "developer"
+    private final static String DEFAULT_PASSWORD = "developer1"
+
+    private final static String ERROR_NO_ARTEFACTID = "You need to configure project property: '$ARTEFACT_ID_PROPERTY'"
+    private final static String ERROR_NO_SOURCESET_CONFIG = "Neither android extension nor java plugin convention are available - " +
+            "please apply appropriate plugin or ensure that this plugin is applied after the android extension configuration"
+    private final static String ERROR_MISSING_UPLOAD_TASK = "uploadArchives task could not been retrieved - please apply maven plugin"
 
     private Project project
     private Task incrementVersionTask
@@ -46,18 +62,17 @@ class ArchivaUploadPlugin implements Plugin<Project> {
 
     @Override
     void apply(Project project) {
-        println "executing apply"
         this.project = project
         this.versionFile = createVersionFileIfNotExist()
 
-        if (!project.hasProperty(CONFIG_ARTEFACT_ID_NAME))
-            throw new GradleException("You need to configure project property: '$CONFIG_ARTEFACT_ID_NAME'")
+        if (!project.hasProperty(ARTEFACT_ID_PROPERTY)) throw new GradleException(ERROR_NO_ARTEFACTID)
 
         androidExtension = project.extensions.findByName(ANDROID_EXTENSION_NAME) as LibraryExtension
         if (androidExtension != null) {
             isAndroidProject = true
             androidJavaSourceDirSet = androidExtension.sourceSets.getByName(MAIN_SOURCE_NAME).java
         }
+
         cleanTask = project.tasks.findByName(CLEAN_TASK_NAME) as AbstractTask
         assembleTask = project.tasks.findByName(ASSEMBLE_TASK_NAME) as AbstractTask
 
@@ -71,17 +86,12 @@ class ArchivaUploadPlugin implements Plugin<Project> {
     }
 
     def createVersionFileTask() {
-        println "executing createVersionFileTask"
-        return project.tasks.create(CREATE_VERSION_FILE_TASK_NAME) {
-            doLast {
-                println "run task $CREATE_VERSION_FILE_TASK_NAME"
-                createVersionFileIfNotExist()
-            }
-        }
+        def createVersionFileTask = project.tasks.create(CREATE_VERSION_FILE_TASK_NAME)
+        createVersionFileTask.doLast { createVersionFileIfNotExist() }
+        return createVersionFileTask
     }
 
     def createVersionFileIfNotExist() {
-        println "executing createVersionFileIfNotExist"
         def versionFile = project.file("${project.projectDir}/version.txt")
         if (!versionFile.exists()) {
             versionFile = new File("${project.projectDir}/version.txt")
@@ -92,44 +102,35 @@ class ArchivaUploadPlugin implements Plugin<Project> {
     }
 
     def createIncrementVersionTask() {
-        println "executing createIncrementVersionTask"
-        return project.tasks.create(INCREMENT_VERSION_TASK_NAME) {
-            doLast {
-                println "run task $INCREMENT_VERSION_TASK_NAME"
-                if (versionFile.exists())
-                    writeNextVersion()
+        def incrementVersionTask = project.tasks.create(INCREMENT_VERSION_TASK_NAME)
+        incrementVersionTask.doLast {
+            if (versionFile.exists()) {
+                def currentVersion = versionFile.readLines().last()
+                def versionSplit = currentVersion.split('\\.')
+                def nextVersion = "${versionSplit[0]}.${versionSplit[1]}.${versionSplit[2].toInteger() + 1}"
+                versionFile.append("\n$nextVersion")
+                println "Version incremented from $currentVersion to $nextVersion"
             }
         }
-    }
-
-    def writeNextVersion() {
-        println "executing writeNextVersion"
-        def currentVersion = versionFile.readLines().last()
-        def versionSplit = currentVersion.split('\\.')
-        def nextVersion = "${versionSplit[0]}.${versionSplit[1]}.${versionSplit[2].toInteger() + 1}"
-        versionFile.append("\n$nextVersion")
-        println "Version incremented from $currentVersion to $nextVersion"
+        return incrementVersionTask
     }
 
     def createAssembleSourcesTask() {
-        println "executing createAssembleSourcesTask"
-        def sourcesTask = project.tasks.create(ASSEMBLE_SOURCES_TASK_NAME, Jar)
+        def assembleSourcesTask = project.tasks.create(ASSEMBLE_SOURCES_TASK_NAME, Jar)
 
         if (isAndroidProject) {
-            sourcesTask.from androidJavaSourceDirSet.srcDirs
+            assembleSourcesTask.from androidJavaSourceDirSet.srcDirs
         } else {
             def javaConvention = project.convention.findPlugin(JavaPluginConvention.class)
-            if (javaConvention == null)
-                throw new GradleException("Neither android extension nor java plugin convention are available - please apply an android or java plugin")
-            sourcesTask.from javaConvention.sourceSets.getByName(MAIN_SOURCE_NAME).java.srcDirs
+            if (javaConvention == null) throw new GradleException(ERROR_NO_SOURCESET_CONFIG)
+            assembleSourcesTask.from javaConvention.sourceSets.main.java.srcDirs
         }
-        sourcesTask.classifier = CLASSIFIER_SOURCES
+        assembleSourcesTask.classifier = CLASSIFIER_SOURCES
 
-        return sourcesTask
+        return assembleSourcesTask
     }
 
     def createJavadocTask() {
-        println "executing createJavadocTask"
         def javadocTask = project.tasks.create(CREATE_JAVADOC_TASK_NAME, Javadoc)
         javadocTask.failOnError = false
         javadocTask.source = androidJavaSourceDirSet.sourceFiles
@@ -137,7 +138,6 @@ class ArchivaUploadPlugin implements Plugin<Project> {
     }
 
     def createAssembleJavadocTask() {
-        println "executing createAssembleJavadocTask"
         def options = [name: ASSEMBLE_JAVADOC_TASK_NAME, type: Jar, dependsOn: CREATE_JAVADOC_TASK_NAME]
         def assembleJavadocTask = project.tasks.create(options) as Jar
         def javadocTask = project.tasks.findByName(CREATE_JAVADOC_TASK_NAME) as Javadoc
@@ -145,37 +145,38 @@ class ArchivaUploadPlugin implements Plugin<Project> {
         assembleJavadocTask.from javadocTask.destinationDir
         assembleJavadocTask.classifier = CLASSIFIER_JAVADOC
         assembleJavadocTask.dependsOn assembleSourcesTask
-//        assembleTask.finalizedBy assembleJavadocTask
 
         return assembleJavadocTask
     }
 
     def createArchivaUploadTask() {
-        println "executing createArchivaUploadTask"
-        project.tasks.create(ARCHIVA_UPLOAD_TASK_NAME) {
-            doLast {
-                println "run task $ARCHIVA_UPLOAD_TASK_NAME"
-                def uploadArchivesTask = project.tasks.withType(Upload.class).findByName(BasePlugin.UPLOAD_ARCHIVES_TASK_NAME)
-                if (uploadArchivesTask == null)
-                    throw new GradleException("uploadArchives task could not been retrieved - please apply maven plugin")
+        def archivaUploadTask = project.tasks.create(ARCHIVA_UPLOAD_TASK_NAME)
+        archivaUploadTask.dependsOn assembleTask
+        archivaUploadTask.doLast {
+            def uploadArchivesTask = project.tasks.withType(Upload.class).findByName(BasePlugin.UPLOAD_ARCHIVES_TASK_NAME)
+            if (uploadArchivesTask == null) throw new GradleException(ERROR_MISSING_UPLOAD_TASK)
 
-                def pom = ((MavenDeployer) uploadArchivesTask.repositories.withType(MavenDeployer.class).first()).pom
+            def mavenDeployer = (MavenDeployer) uploadArchivesTask.repositories.withType(MavenDeployer.class).first()
+            def repository = new MavenRemoteRepository()
+            repository.setUrl(getPropertyValueOrDefault(URL_PROPERTY, DEFAULT_URL))
+            def userName = getPropertyValueOrDefault(USERNAME_PROPERTY, DEFAULT_USERNAME)
+            def password = getPropertyValueOrDefault(PASSWORD_PROPERTY, DEFAULT_PASSWORD)
+            repository.authentication([userName: userName, password: password])
+            mavenDeployer.setRepository(repository)
 
-                pom.groupId = project.hasProperty(CONFIG_GROUP_ID_NAME) ? project.property(CONFIG_GROUP_ID_NAME) : DEFAULT_GROUP_ID
-                pom.artifactId = project.property(CONFIG_ARTEFACT_ID_NAME)
-                pom.packaging = project.hasProperty(CONFIG_PACKAGING_NAME) ? project.property(CONFIG_PACKAGING_NAME) : DEFAULT_PACKAGING
-
-//                cleanTask.execute()
-                assembleTask.execute()
-
-                uploadArchivesTask.finalizedBy(incrementVersionTask)
-//                uploadArchivesTask.execute()
-            }
+            def pom = mavenDeployer.pom
+            pom.groupId = getPropertyValueOrDefault(GROUP_ID_PROPERTY, DEFAULT_GROUP_ID)
+            pom.artifactId = project.property(ARTEFACT_ID_PROPERTY)
+            pom.packaging = getPropertyValueOrDefault(PACKAGING_PROPERTY, DEFAULT_PACKAGING)
+            pom.version = versionFile.readLines().last()
         }
     }
 
+    String getPropertyValueOrDefault(String propertyName, String defaultValue) {
+        return project.hasProperty(propertyName) ? project.property(propertyName) : defaultValue
+    }
+
     def addArtifacts() {
-        println "executing addArtifacts"
         project.artifacts.add(ARCHIVES_CONFIG_NAME, assembleJavadocTask)
         project.artifacts.add(ARCHIVES_CONFIG_NAME, assembleSourcesTask)
     }

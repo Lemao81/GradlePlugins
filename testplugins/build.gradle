@@ -2,9 +2,6 @@ apply plugin: 'com.android.library'
 apply plugin: 'maven'
 //apply plugin: 'java'
 
-ext {
-    artefactId = "gradleplugintest"
-}
 
 buildscript {
     repositories {
@@ -14,7 +11,7 @@ buildscript {
         }
     }
     dependencies {
-        classpath name: "plugin"
+        classpath name: "plugins"
     }
 }
 
@@ -22,18 +19,12 @@ android {
     compileSdkVersion Versions.compileSdkVersion
 }
 
-apply plugin: 'archivaUpload'
-
+ext.artefactId = "gradleplugintest"
+apply plugin: 'custom-archivaupload'
 uploadArchives {
     repositories {
-        mavenDeployer {
-            repository(url: Urls.mavenLocalInternal) {
-                authentication(userName: LOCAL_REPO_USER, password: LOCAL_REPO_PASSWORD)
-            }
-            pom {
-                version = file("$projectDir/version.txt").readLines().last()
-            }
-        }
+        mavenDeployer()
     }
 }
-
+archivaUpload.finalizedBy uploadArchives
+uploadArchives.finalizedBy incrementVersion
