@@ -1,5 +1,4 @@
 apply plugin: 'com.android.library'
-apply plugin: 'maven'
 //apply plugin: 'java'
 
 
@@ -19,12 +18,9 @@ android {
     compileSdkVersion Versions.compileSdkVersion
 }
 
-ext.artefactId = "gradleplugintest"
+apply plugin: 'maven'
 apply plugin: 'custom-archivaupload'
-uploadArchives {
-    repositories {
-        mavenDeployer()
-    }
-}
+archiva { artifactId = "testplugins" }
+uploadArchives { repositories { mavenDeployer() } }
 archivaUpload.finalizedBy uploadArchives
 uploadArchives.finalizedBy incrementVersion

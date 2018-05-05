@@ -22,21 +22,15 @@ class ArchivaUploadPlugin implements Plugin<Project> {
     private final static String ASSEMBLE_JAVADOC_TASK_NAME = "assembleJavadoc"
     private final static String CREATE_JAVADOC_TASK_NAME = "javadoc"
     private final static String ARCHIVA_UPLOAD_TASK_NAME = "archivaUpload"
-    private final static String CLEAN_TASK_NAME = "clean"
     private final static String ASSEMBLE_TASK_NAME = "assemble"
 
     private final static String ANDROID_EXTENSION_NAME = "android"
+    private final static String ARCHIVA_EXTENSION_NAME = "archiva"
     private final static String MAIN_SOURCE_NAME = "main"
     private final static String CLASSIFIER_SOURCES = "sources"
     private final static String CLASSIFIER_JAVADOC = "javadoc"
     private final static String ARCHIVES_CONFIG_NAME = "archives"
-
-    private final static String ARTEFACT_ID_PROPERTY = "artefactId"
-    private final static String GROUP_ID_PROPERTY = "groupId"
-    private final static String PACKAGING_PROPERTY = "packaging"
-    private final static String URL_PROPERTY = "url"
-    private final static String USERNAME_PROPERTY = "userName"
-    private final static String PASSWORD_PROPERTY = "password"
+    private final static String ARTIFACTID_PROPERTY = "artifactId"
 
     private final static String DEFAULT_GROUP_ID = "com.jueggs"
     private final static String DEFAULT_PACKAGING = "aar"
@@ -44,20 +38,22 @@ class ArchivaUploadPlugin implements Plugin<Project> {
     private final static String DEFAULT_USERNAME = "developer"
     private final static String DEFAULT_PASSWORD = "developer1"
 
-    private final static String ERROR_NO_ARTEFACTID = "You need to configure project property: '$ARTEFACT_ID_PROPERTY'"
+    private final static String ERROR_NO_ARTIFACTID = "'$ARCHIVA_EXTENSION_NAME' extension with property '$ARTIFACTID_PROPERTY' must be configured:\n" +
+            "$ARCHIVA_EXTENSION_NAME {\n\t$ARTIFACTID_PROPERTY = 'your_artifactId'\n}"
     private final static String ERROR_NO_SOURCESET_CONFIG = "Neither android extension nor java plugin convention are available - " +
             "please apply appropriate plugin or ensure that this plugin is applied after the android extension configuration"
-    private final static String ERROR_MISSING_UPLOAD_TASK = "uploadArchives task could not been retrieved - please apply maven plugin"
+    private final static String ERROR_NO_UPLOAD_TASK = "'uploadArchives' task not found - 'maven' plugin must be applied before"
+    private final static String ERROR_NO_MAVENDEPLOYER = "'uploadArchives' task must be configured properly:\n" +
+            "uploadArchives { repositories { mavenDeployer() } }"
 
     private Project project
     private Task incrementVersionTask
-    private AbstractTask cleanTask
-    private AbstractTask assembleTask
     private Task assembleSourcesTask
     private Task assembleJavadocTask
+    private ArchivaUploadExtension archivaExtension
     private LibraryExtension androidExtension
     private AndroidSourceDirectorySet androidJavaSourceDirSet
-    private boolean isAndroidProject = false
+    private boolean isAndroid = false
     private File versionFile
 
     @Override
@@ -65,24 +61,24 @@ class ArchivaUploadPlugin implements Plugin<Project> {
         this.project = project
         this.versionFile = createVersionFileIfNotExist()
 
-        if (!project.hasProperty(ARTEFACT_ID_PROPERTY)) throw new GradleException(ERROR_NO_ARTEFACTID)
+        archivaExtension = project.extensions.create(ARCHIVA_EXTENSION_NAME, ArchivaUploadExtension)
 
-        androidExtension = project.extensions.findByName(ANDROID_EXTENSION_NAME) as LibraryExtension
-        if (androidExtension != null) {
-            isAndroidProject = true
-            androidJavaSourceDirSet = androidExtension.sourceSets.getByName(MAIN_SOURCE_NAME).java
-        }
-
-        cleanTask = project.tasks.findByName(CLEAN_TASK_NAME) as AbstractTask
-        assembleTask = project.tasks.findByName(ASSEMBLE_TASK_NAME) as AbstractTask
-
+        checkAndroidExtension()
         createVersionFileTask()
         incrementVersionTask = createIncrementVersionTask()
         assembleSourcesTask = createAssembleSourcesTask()
-        if (isAndroidProject) createJavadocTask()
+        if (isAndroid) createJavadocTask()
         assembleJavadocTask = createAssembleJavadocTask()
         createArchivaUploadTask()
         addArtifacts()
+    }
+
+    def checkAndroidExtension() {
+        androidExtension = project.extensions.findByName(ANDROID_EXTENSION_NAME) as LibraryExtension
+        if (androidExtension != null) {
+            isAndroid = true
+            androidJavaSourceDirSet = androidExtension.sourceSets.getByName(MAIN_SOURCE_NAME).java
+        }
     }
 
     def createVersionFileTask() {
@@ -109,7 +105,7 @@ class ArchivaUploadPlugin implements Plugin<Project> {
                 def versionSplit = currentVersion.split('\\.')
                 def nextVersion = "${versionSplit[0]}.${versionSplit[1]}.${versionSplit[2].toInteger() + 1}"
                 versionFile.append("\n$nextVersion")
-                println "Version incremented from $currentVersion to $nextVersion"
+                println "Version incremented from $currentVersion to $nextVersion. Current version: $currentVersion"
             }
         }
         return incrementVersionTask
@@ -118,7 +114,7 @@ class ArchivaUploadPlugin implements Plugin<Project> {
     def createAssembleSourcesTask() {
         def assembleSourcesTask = project.tasks.create(ASSEMBLE_SOURCES_TASK_NAME, Jar)
 
-        if (isAndroidProject) {
+        if (isAndroid) {
             assembleSourcesTask.from androidJavaSourceDirSet.srcDirs
         } else {
             def javaConvention = project.convention.findPlugin(JavaPluginConvention.class)
@@ -151,29 +147,47 @@ class ArchivaUploadPlugin implements Plugin<Project> {
 
     def createArchivaUploadTask() {
         def archivaUploadTask = project.tasks.create(ARCHIVA_UPLOAD_TASK_NAME)
-        archivaUploadTask.dependsOn assembleTask
-        archivaUploadTask.doLast {
-            def uploadArchivesTask = project.tasks.withType(Upload.class).findByName(BasePlugin.UPLOAD_ARCHIVES_TASK_NAME)
-            if (uploadArchivesTask == null) throw new GradleException(ERROR_MISSING_UPLOAD_TASK)
+        archivaUploadTask.dependsOn project.tasks.findByName(ASSEMBLE_TASK_NAME) as AbstractTask
 
-            def mavenDeployer = (MavenDeployer) uploadArchivesTask.repositories.withType(MavenDeployer.class).first()
+        archivaUploadTask.doLast {
+            completeArchivaExtension()
+            def uploadArchivesTask = getUploadArchivesTask()
+            def mavenDeployer = getMavenDeployer(uploadArchivesTask)
             def repository = new MavenRemoteRepository()
-            repository.setUrl(getPropertyValueOrDefault(URL_PROPERTY, DEFAULT_URL))
-            def userName = getPropertyValueOrDefault(USERNAME_PROPERTY, DEFAULT_USERNAME)
-            def password = getPropertyValueOrDefault(PASSWORD_PROPERTY, DEFAULT_PASSWORD)
-            repository.authentication([userName: userName, password: password])
+
+            repository.setUrl(archivaExtension.url)
+            repository.authentication([userName: archivaExtension.userName, password: archivaExtension.password])
             mavenDeployer.setRepository(repository)
 
             def pom = mavenDeployer.pom
-            pom.groupId = getPropertyValueOrDefault(GROUP_ID_PROPERTY, DEFAULT_GROUP_ID)
-            pom.artifactId = project.property(ARTEFACT_ID_PROPERTY)
-            pom.packaging = getPropertyValueOrDefault(PACKAGING_PROPERTY, DEFAULT_PACKAGING)
+            pom.groupId = archivaExtension.groupId
+            pom.artifactId = archivaExtension.artifactId
+            pom.packaging = archivaExtension.packaging
             pom.version = versionFile.readLines().last()
         }
     }
 
-    String getPropertyValueOrDefault(String propertyName, String defaultValue) {
-        return project.hasProperty(propertyName) ? project.property(propertyName) : defaultValue
+    def completeArchivaExtension() {
+        if (archivaExtension.artifactId == null) throw new GradleException(ERROR_NO_ARTIFACTID)
+        if (archivaExtension.url == null) archivaExtension.url = DEFAULT_URL
+        if (archivaExtension.groupId == null) archivaExtension.groupId = DEFAULT_GROUP_ID
+        if (archivaExtension.packaging == null) archivaExtension.packaging = DEFAULT_PACKAGING
+        if (archivaExtension.userName == null) archivaExtension.userName = DEFAULT_USERNAME
+        if (archivaExtension.password == null) archivaExtension.password = DEFAULT_PASSWORD
+    }
+
+    def getUploadArchivesTask() {
+        def uploadArchivesTask = project.tasks.withType(Upload.class).findByName(BasePlugin.UPLOAD_ARCHIVES_TASK_NAME)
+        if (uploadArchivesTask == null) throw new GradleException(ERROR_NO_UPLOAD_TASK)
+        return uploadArchivesTask
+    }
+
+    static def getMavenDeployer(Upload uploadArchivesTask) {
+        try {
+            return (MavenDeployer) uploadArchivesTask.repositories.withType(MavenDeployer.class).first()
+        } catch (Exception ex) {
+            throw new GradleException(ERROR_NO_MAVENDEPLOYER)
+        }
     }
 
     def addArtifacts() {
