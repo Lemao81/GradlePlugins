@@ -12,7 +12,7 @@ uploadArchives {
             pom {
                 groupId = GROUP_ID
                 artifactId = 'gradleplugins'
-                version = '1.0.1'
+                version = '1.0.4'
             }
         }
     }
@@ -21,10 +21,10 @@ uploadArchives {
 dependencies {
     implementation gradleApi()
     implementation localGroovy()
-    implementation Plugins.gradle
+    implementation Plugins.androidGradle
 
     testCompile gradleTestKit()
-    testCompile Libs.jUnit
+    testCompile Lib.jUnit
 }
 
 sourceCompatibility = Versions.java8

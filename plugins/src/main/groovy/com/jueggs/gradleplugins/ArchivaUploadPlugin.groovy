@@ -47,9 +47,6 @@ class ArchivaUploadPlugin implements Plugin<Project> {
             "uploadArchives { repositories { mavenDeployer() } }"
 
     private Project project
-    private Task incrementVersionTask
-    private Task assembleSourcesTask
-    private Task assembleJavadocTask
     private ArchivaUploadExtension archivaExtension
     private LibraryExtension androidExtension
     private AndroidSourceDirectorySet androidJavaSourceDirSet
@@ -63,28 +60,32 @@ class ArchivaUploadPlugin implements Plugin<Project> {
 
         archivaExtension = project.extensions.create(ARCHIVA_EXTENSION_NAME, ArchivaUploadExtension)
 
-        checkAndroidExtension()
         createVersionFileTask()
-        incrementVersionTask = createIncrementVersionTask()
-        assembleSourcesTask = createAssembleSourcesTask()
-        if (isAndroid) createJavadocTask()
-        assembleJavadocTask = createAssembleJavadocTask()
-        createArchivaUploadTask()
-        addArtifacts()
+        def incrementVersionTask = createIncrementVersionTask()
+        def archivaUploadTask = createArchivaUploadTask()
+
+        project.afterEvaluate {
+            checkForAndroidExtension()
+            def assembleSourcesTask = createAssembleSourcesTask()
+            def assembleJavadocTask = createAssembleJavadocTask(assembleSourcesTask)
+
+            addArtifacts(assembleSourcesTask, assembleJavadocTask)
+            configureUploadArchivesTask(incrementVersionTask, archivaUploadTask)
+        }
     }
 
-    def checkAndroidExtension() {
+    def checkForAndroidExtension() {
         androidExtension = project.extensions.findByName(ANDROID_EXTENSION_NAME) as LibraryExtension
         if (androidExtension != null) {
             isAndroid = true
             androidJavaSourceDirSet = androidExtension.sourceSets.getByName(MAIN_SOURCE_NAME).java
+            createJavadocTask()
         }
     }
 
     def createVersionFileTask() {
         def createVersionFileTask = project.tasks.create(CREATE_VERSION_FILE_TASK_NAME)
         createVersionFileTask.doLast { createVersionFileIfNotExist() }
-        return createVersionFileTask
     }
 
     def createVersionFileIfNotExist() {
@@ -105,7 +106,7 @@ class ArchivaUploadPlugin implements Plugin<Project> {
                 def versionSplit = currentVersion.split('\\.')
                 def nextVersion = "${versionSplit[0]}.${versionSplit[1]}.${versionSplit[2].toInteger() + 1}"
                 versionFile.append("\n$nextVersion")
-                println "Version incremented from $currentVersion to $nextVersion. Current version: $currentVersion"
+                println "Version incremented. Current version: $currentVersion"
             }
         }
         return incrementVersionTask
@@ -133,7 +134,7 @@ class ArchivaUploadPlugin implements Plugin<Project> {
         javadocTask.classpath += project.files(androidExtension.bootClasspath.join(File.pathSeparator))
     }
 
-    def createAssembleJavadocTask() {
+    def createAssembleJavadocTask(Task assembleSourcesTask) {
         def options = [name: ASSEMBLE_JAVADOC_TASK_NAME, type: Jar, dependsOn: CREATE_JAVADOC_TASK_NAME]
         def assembleJavadocTask = project.tasks.create(options) as Jar
         def javadocTask = project.tasks.findByName(CREATE_JAVADOC_TASK_NAME) as Javadoc
@@ -148,23 +149,29 @@ class ArchivaUploadPlugin implements Plugin<Project> {
     def createArchivaUploadTask() {
         def archivaUploadTask = project.tasks.create(ARCHIVA_UPLOAD_TASK_NAME)
         archivaUploadTask.dependsOn project.tasks.findByName(ASSEMBLE_TASK_NAME) as AbstractTask
+        archivaUploadTask.group = "archive"
 
-        archivaUploadTask.doLast {
-            completeArchivaExtension()
-            def uploadArchivesTask = getUploadArchivesTask()
-            def mavenDeployer = getMavenDeployer(uploadArchivesTask)
-            def repository = new MavenRemoteRepository()
+        return archivaUploadTask
+    }
 
-            repository.setUrl(archivaExtension.url)
-            repository.authentication([userName: archivaExtension.userName, password: archivaExtension.password])
-            mavenDeployer.setRepository(repository)
+    def configureUploadArchivesTask(Task incrementVersionTask, Task archivaUploadTask) {
+        completeArchivaExtension()
+        def uploadArchivesTask = getUploadArchivesTask()
+        def mavenDeployer = getMavenDeployer(uploadArchivesTask)
+        def repository = new MavenRemoteRepository()
 
-            def pom = mavenDeployer.pom
-            pom.groupId = archivaExtension.groupId
-            pom.artifactId = archivaExtension.artifactId
-            pom.packaging = archivaExtension.packaging
-            pom.version = versionFile.readLines().last()
-        }
+        repository.setUrl(archivaExtension.url)
+        repository.authentication([userName: archivaExtension.userName, password: archivaExtension.password])
+        mavenDeployer.setRepository(repository)
+
+        def pom = mavenDeployer.pom
+        pom.groupId = archivaExtension.groupId
+        pom.artifactId = archivaExtension.artifactId
+        pom.packaging = archivaExtension.packaging
+        pom.version = versionFile.readLines().last()
+
+        uploadArchivesTask.finalizedBy incrementVersionTask
+        archivaUploadTask.finalizedBy uploadArchivesTask
     }
 
     def completeArchivaExtension() {
@@ -190,8 +197,8 @@ class ArchivaUploadPlugin implements Plugin<Project> {
         }
     }
 
-    def addArtifacts() {
-        project.artifacts.add(ARCHIVES_CONFIG_NAME, assembleJavadocTask)
+    def addArtifacts(Task assembleSourcesTask, Task assembleJavadocTask) {
         project.artifacts.add(ARCHIVES_CONFIG_NAME, assembleSourcesTask)
+        project.artifacts.add(ARCHIVES_CONFIG_NAME, assembleJavadocTask)
     }
 }

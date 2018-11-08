@@ -1,5 +1,7 @@
 apply plugin: 'com.android.library'
 //apply plugin: 'java'
+apply plugin: 'maven'
+apply plugin: 'custom-archivaupload'
 
 
 buildscript {
@@ -15,12 +17,8 @@ buildscript {
 }
 
 android {
-    compileSdkVersion Versions.compileSdkVersion
+    compileSdkVersion App.compileSdkVersion
 }
 
-apply plugin: 'maven'
-apply plugin: 'custom-archivaupload'
 archiva { artifactId = "testplugins" }
 uploadArchives { repositories { mavenDeployer() } }
-archivaUpload.finalizedBy uploadArchives
-uploadArchives.finalizedBy incrementVersion
